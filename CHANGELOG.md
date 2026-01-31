@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Initial release.
-- ASGI wrapper `asyncplus(fastapi_app, socketio_app)` for combining FastAPI and Socket.IO in one app.
+- Package `asyncutilsx`: ASGI wrapper `asyncplus(fastapi_app, socketio_app)` for combining FastAPI and Socket.IO in one app.
 - Pure routing: HTTP (except `/socket.io/*`) → FastAPI; HTTP `/socket.io/*` and WebSocket → Socket.IO.
 - Support for `AsyncServer` or pre-wrapped `ASGIApp` as the Socket.IO argument.
 - Total handling of scope: `None` and non-dict scope normalized before dispatch; no unhandled exceptions from routing.

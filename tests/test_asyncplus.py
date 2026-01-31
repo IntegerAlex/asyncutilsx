@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: LGPL-2.1-only
-# Copyright (c) 2025 Akshat kotpalliwar (alias IntegerAlex)
+# Copyright (c) 2026 Akshat kotpalliwar (alias IntegerAlex)
 
-"""Tests for asyncplus ASGI wrapper.
+"""Tests for asyncutilsx ASGI wrapper.
 
 Production-grade: total functions — no runtime exceptions, no undefined behavior
 for any input to _route, _to_asgi_app, asyncplus, and the returned ASGI app.
@@ -10,7 +10,7 @@ for any input to _route, _to_asgi_app, asyncplus, and the returned ASGI app.
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from asyncplus import asyncplus, _route, _to_asgi_app
+from asyncutilsx import asyncplus, _route, _to_asgi_app
 from fastapi import FastAPI
 from socketio.asgi import ASGIApp
 from socketio.async_server import AsyncServer
@@ -115,7 +115,7 @@ class TestToAsgiApp:
         assert isinstance(r1, ASGIApp) and isinstance(r2, ASGIApp)
 
 
-# --- asyncplus factory and returned ASGI app: total over inputs ----------------
+# --- asyncplus() factory and returned ASGI app: total over inputs --------------
 
 
 class TestAsyncplus:
@@ -240,7 +240,7 @@ class TestAsyncplus:
         assert call_scope.get("path") == "/"
 
     @pytest.mark.asyncio
-    async def test_asyncplus_accepts_asgi_app_as_socketio_arg(self):
+    async def test_accepts_asgi_app_as_socketio_arg(self):
         """Passing pre-wrapped ASGIApp (not AsyncServer) must work; total over union type."""
         sio = AsyncServer(async_mode="asgi")
         wrapped = ASGIApp(sio)

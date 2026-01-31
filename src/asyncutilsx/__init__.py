@@ -8,7 +8,7 @@ Designed around functional principles:
 - Pure core: routing decision is a pure, total function (same scope → same route).
 - Isolated effects: I/O (ASGI call) happens only at the boundary in one place.
 - Immutable: scope and captured values are never mutated.
-- Composition: asyncplus composes _to_asgi_app and a closure over _route + dispatch.
+- Composition: asyncutilsx composes _to_asgi_app and a closure over _route + dispatch.
 """
 
 from collections.abc import Callable
