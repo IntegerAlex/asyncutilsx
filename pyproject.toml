@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "asyncplus"
+version = "0.1.0"
+description = "ASGI wrapper for combining FastAPI and Socket.IO in one app"
+readme = "README.md"
+license = "LGPL-2.1-only"
+requires-python = ">=3.12"
+authors = [
+    { name = "Akshat kotpalliwar (IntegerAlex)" }
+]
+maintainers = [
+    { name = "Akshat kotpalliwar (IntegerAlex)" }
+]
+keywords = ["asgi", "fastapi", "socket.io", "websocket"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP :: ASGI",
+]
+dependencies = [
+    "fastapi>=0.115.0",
+    "python-socketio>=5.11.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.27",
+]
+
+[project.urls]
+Repository = "https://github.com/IntegerAlex/asyncplus"
+Documentation = "https://github.com/IntegerAlex/asyncplus#readme"
+Changelog = "https://github.com/IntegerAlex/asyncplus/blob/main/CHANGELOG.md"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: LGPL-2.1-only
+# Copyright (c) 2025 Akshat kotpalliwar (alias IntegerAlex)
+
+include README.md
+include CHANGELOG.md
+include NOTICE
+include pyproject.toml
+recursive-include src *.py
+recursive-include tests *.py
+global-exclude __pycache__
+global-exclude *.pyc
