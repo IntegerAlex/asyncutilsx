@@ -402,6 +402,11 @@ class TestAsyncplus:
         import asyncio
 
         async def hanging_app(scope, receive, send):
+            """
+            ASGI application that hangs indefinitely.
+            
+            Used to simulate a downstream app that never responds: the coroutine awaits an unresolved Future and therefore never sends events, never receives a completed message, and never returns.
+            """
             await asyncio.Future()  # never completes
 
         fastapi_app = MagicMock()
@@ -418,7 +423,9 @@ class TestAsyncplus:
 
     @pytest.mark.asyncio
     async def test_accepts_asgi_app_as_socketio_arg(self):
-        """Passing pre-wrapped ASGIApp (not AsyncServer) must work; total over union type."""
+        """
+        Verify that asyncplus accepts a pre-wrapped ASGIApp as the socketio argument and routes a websocket scope to it.
+        """
         sio = AsyncServer(async_mode="asgi")
         wrapped = ASGIApp(sio)
         combined = asyncplus(FastAPI(), wrapped)

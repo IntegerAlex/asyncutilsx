@@ -51,7 +51,14 @@ _logger = logging.getLogger(__name__)
 class DebugHook(Protocol):
     """Protocol for optional routing callback. Enables type-safe debug_hook."""
 
-    def __call__(self, route: Route, scope: Scope) -> None: ...
+    def __call__(self, route: Route, scope: Scope) -> None: """
+Invoked with the selected Route and its ASGI scope.
+
+Parameters:
+    route (Route): The routing target chosen for the current request — either "socketio" or "fastapi".
+    scope (Scope): The ASGI connection scope dictionary for the current request.
+"""
+...
 
 
 def router(
@@ -59,12 +66,14 @@ def router(
     default_app: ASGI3Application | None = None,
 ) -> ASGI3Application:
     """
-    Pure function. Builds an ASGI app that dispatches by the first matching
-    (predicate, app) in routes; if none match, uses default_app or raises.
-
-    Example:
-        routes = [(lambda s: s.get("type") == "websocket", ws_app)]
-        app = router(routes, default_app=fastapi_app)
+    Builds an ASGI application that dispatches each incoming scope to the first app whose predicate returns true.
+    
+    Parameters:
+        routes (Sequence[tuple[Callable[[Scope], bool], ASGI3Application]]): Sequence of (predicate, app) pairs where each predicate is called with the ASGI scope and, if it returns `True`, its corresponding app will handle the request.
+        default_app (ASGI3Application | None): Optional application to call when no predicate matches; if `None` and no predicates match, a RuntimeError is raised.
+    
+    Returns:
+        ASGI3Application: An ASGI application callable that routes incoming requests according to the provided predicates.
     """
 
     async def app(
@@ -72,6 +81,18 @@ def router(
         receive: ASGIReceiveCallable,
         send: ASGISendCallable,
     ) -> None:
+        """
+        Dispatches an incoming ASGI request to the first matching route application or to a default application.
+        
+        Parameters:
+            scope (Scope): The ASGI connection scope for the request.
+            receive (ASGIReceiveCallable): Callable to receive ASGI events from the server.
+            send (ASGISendCallable): Callable to send ASGI events to the server.
+        
+        Raises:
+            TypeError: If `scope` is not a dict.
+            RuntimeError: If no predicate matches the scope and no default application is provided.
+        """
         if not isinstance(scope, dict):
             raise TypeError(
                 f"ASGI scope must be dict, got {type(scope).__name__}"
@@ -92,12 +113,14 @@ def create_app(
     socketio_server: AsyncServer,
 ) -> ASGI3Application:
     """
-    Simplest setup: pass your FastAPI and Socket.IO server.
-
-    Example:
-        app = FastAPI()
-        sio = socketio.AsyncServer(async_mode="asgi")
-        asgi_app = create_app(app, sio)
+    Create a composed ASGI application that dispatches requests between a FastAPI app and a Socket.IO server.
+    
+    Parameters:
+        fastapi_app (FastAPI): FastAPI application to handle HTTP and lifespan requests.
+        socketio_server (AsyncServer): Socket.IO AsyncServer to handle WebSocket/Socket.IO requests.
+    
+    Returns:
+        ASGI3Application: An ASGI application that routes incoming scopes to the Socket.IO server or the FastAPI app based on scope type and request path.
     """
     return asyncplus(fastapi_app, socketio_server)
 
@@ -106,11 +129,12 @@ def health_check_route() -> (
     tuple[Callable[[Scope], bool], ASGI3Application]
 ):
     """
-    Returns a (predicate, app) tuple for a /health endpoint. Use with router().
-
-    Example:
-        routes = [health_check_route(), (is_socketio, sio_app)]
-        app = router(routes, default_app=fastapi_app)
+    Provide a predicate and ASGI application that implement a plain-text "/health" HTTP endpoint.
+    
+    The predicate returns True when the incoming scope's "path" equals "/health". The ASGI application responds with HTTP 200 and a plain-text body "OK".
+    
+    Returns:
+        tuple[Callable[[Scope], bool], ASGI3Application]: (predicate, app) pair for routing the "/health" endpoint.
     """
 
     async def health_app(
@@ -118,6 +142,11 @@ def health_check_route() -> (
         receive: ASGIReceiveCallable,
         send: ASGISendCallable,
     ) -> None:
+        """
+        Responds to an HTTP request with a plain-text "OK" body.
+        
+        Sends an HTTP 200 response with header `Content-Type: text/plain` and the body "OK".
+        """
         await send({
             "type": "http.response.start",
             "status": 200,
@@ -133,8 +162,13 @@ def health_check_route() -> (
 
 def _to_asgi_app(socketio_app: AsyncServer | ASGIApp) -> ASGIApp:
     """
-    Pure function. Same input → same output; no side effects.
-    Referentially transparent: replaceable by its return value.
+    Normalize a Socket.IO AsyncServer or an ASGI app into an ASGI application.
+    
+    Parameters:
+        socketio_app (AsyncServer | ASGIApp): A Socket.IO AsyncServer instance or an ASGI application.
+    
+    Returns:
+        ASGIApp: An ASGI application. If given an AsyncServer, returns an ASGIApp wrapper around it; otherwise returns the input unchanged.
     """
     if isinstance(socketio_app, AsyncServer):
         return ASGIApp(socketio_app)
@@ -142,7 +176,17 @@ def _to_asgi_app(socketio_app: AsyncServer | ASGIApp) -> ASGIApp:
 
 
 def _validate_socketio_path(socketio_path: str) -> None:
-    """Raise ValueError if path is invalid. Empty is allowed (normalized to default)."""
+    """
+    Validate a Socket.IO mount path and raise if it contains disallowed characters.
+    
+    Parameters:
+    	socketio_path (str): The Socket.IO path to validate. An empty string is allowed
+    		and is treated as the default path.
+    
+    Raises:
+    	ValueError: If `socketio_path` contains control characters (ASCII < 32), a space,
+    		or a tab. The exception message includes the offending path.
+    """
     if not socketio_path:
         return
     invalid_chars = [c for c in socketio_path if ord(c) < 32 or c in (" ", "\t")]
@@ -154,6 +198,23 @@ def _validate_socketio_path(socketio_path: str) -> None:
 
 
 def _normalize_socketio_path(socketio_path: str) -> str:
+    """
+    Normalize a Socket.IO mount path into a safe, absolute ASGI path.
+    
+    Validates the provided path, then returns a normalized value:
+    - If empty, returns "/socket.io/".
+    - If missing a leading "/", prepends one.
+    - Otherwise returns the path unchanged.
+    
+    Parameters:
+        socketio_path (str): Candidate Socket.IO path (may be empty).
+    
+    Returns:
+        str: Normalized Socket.IO path suitable for matching against request paths.
+    
+    Raises:
+        ValueError: If `socketio_path` contains disallowed characters.
+    """
     _validate_socketio_path(socketio_path)
     if not socketio_path:
         return "/socket.io/"
@@ -165,6 +226,18 @@ def _normalize_socketio_path(socketio_path: str) -> str:
 def _matches_socketio_path(path: str, socketio_path: str) -> bool:
     # Match /path, /path/, /path/...; empty socketio_path -> "/" only.
     # socketio_path is pre-normalized (leading slash) by _normalize_socketio_path.
+    """
+    Determine whether a request path targets the configured Socket.IO path or any of its subpaths.
+    
+    Parameters:
+        path (str): The incoming request path (e.g., "/socket.io/", "/socket.io/123").
+        socketio_path (str): The configured Socket.IO path, expected to be normalized with a leading
+            "/" (an empty value is treated as the root "/").
+    
+    Returns:
+        bool: `True` if `path` exactly equals the normalized base socketio path or starts with the
+        base followed by "/", `False` otherwise.
+    """
     base = socketio_path.rstrip("/")
     if not base:
         base = "/"
@@ -173,13 +246,20 @@ def _matches_socketio_path(path: str, socketio_path: str) -> bool:
 
 def _route(scope: Scope, socketio_path: str) -> Route:
     """
-    Pure, total function. Decides target from scope only.
-
-    - Same scope → same Route; no side effects; does not mutate scope.
-    - Total over valid ASGI scope dicts; does not mutate scope.
-      Unknown scope types default to fastapi.
-    - ASGI does not guarantee "path" for all scope types (e.g. lifespan);
-      we use scope.get("path", "") so missing path is safe.
+    Selects which application ("socketio" or "fastapi") should handle the given ASGI scope.
+    
+    Determination:
+    - If scope.type is "lifespan" -> routes to fastapi.
+    - If scope.type is "websocket" -> routes to socketio.
+    - If scope.type is "http" and the request path matches socketio_path -> routes to socketio.
+    - Otherwise -> routes to fastapi.
+    
+    Parameters:
+        scope (Scope): ASGI scope dictionary; missing or non-string fields are treated as absent.
+        socketio_path (str): Configured Socket.IO base path used to decide http routing.
+    
+    Returns:
+        Route: `"socketio"` when the scope targets the Socket.IO application, `"fastapi"` otherwise.
     """
     raw_type = scope.get("type", "http")
     raw_path = scope.get("path", "")  # optional in ASGI for non-http/websocket
@@ -206,19 +286,51 @@ async def _dispatch(
     timeout: float | None = None,
 ) -> None:
     """
-    Effect boundary: single place where I/O (ASGI call) happens.
-    Does not mutate scope, receive, or send; only passes them through.
-    If timeout is set, wraps the ASGI call in asyncio.wait_for; on timeout
-    logs and raises asyncio.TimeoutError (optional circuit breaker).
+    Dispatches an incoming ASGI connection to either the Socket.IO ASGI app or the FastAPI app, applying an optional timeout and optional Socket.IO-to-FastAPI fallback.
+    
+    If `route` is "socketio", the Socket.IO ASGI app is invoked; if it completes successfully the function returns. If the Socket.IO invocation raises an exception and `socketio_fallback_on_error` is True, the FastAPI app is invoked and the function returns; otherwise the original exception is re-raised. When `timeout` is set to a positive number, the selected ASGI invocation is bounded by that timeout; on timeout an asyncio.TimeoutError is raised after logging a warning.
+    
+    Parameters:
+        route (Route): Target route decision, either "socketio" or "fastapi".
+        scope (Scope): ASGI connection scope (not mutated).
+        receive (ASGIReceiveCallable): ASGI receive callable (passed through).
+        send (ASGISendCallable): ASGI send callable (passed through).
+        socketio_asgi (ASGIApp): ASGI application for Socket.IO.
+        fastapi_app (FastAPI): FastAPI ASGI application.
+        socketio_fallback_on_error (bool): If True, fall back to FastAPI when the Socket.IO handler raises an exception.
+        timeout (float | None): Optional per-call timeout in seconds; if None or non-positive, no timeout is applied.
+    
+    Returns:
+        None
     """
 
     async def run_socketio() -> None:
+        """
+        Invoke the Socket.IO ASGI application using the current ASGI scope and I/O callables.
+        
+        Await the Socket.IO application's completion before returning.
+        """
         await socketio_asgi(scope, receive, send)
 
     async def run_fastapi() -> None:
+        """
+        Invoke the FastAPI ASGI application with the current ASGI scope and I/O callables.
+        """
         await fastapi_app(scope, receive, send)
 
     async def run_with_timeout(coro) -> None:
+        """
+        Execute the given coroutine honoring the outer `timeout` configuration.
+        
+        Parameters:
+            coro: The awaitable to run.
+        
+        Returns:
+            None
+        
+        Raises:
+            asyncio.TimeoutError: If `timeout` is set to a value greater than zero and the coroutine does not complete within that many seconds.
+        """
         if timeout is not None and timeout > 0:
             try:
                 await asyncio.wait_for(coro, timeout=timeout)
@@ -257,7 +369,17 @@ async def _dispatch(
 def asyncplus(
     fastapi_app: FastAPI,
     socketio_app: AsyncServer | ASGIApp,
-) -> ASGI3Application: ...
+) -> ASGI3Application: """
+    Create a composed ASGI application that routes incoming ASGI connections between a FastAPI app and a Socket.IO app.
+    
+    Parameters:
+        fastapi_app (FastAPI): The FastAPI application that will handle HTTP requests and lifespan events.
+        socketio_app (AsyncServer | ASGIApp): A python-socketio AsyncServer or any ASGI application that will handle WebSocket connections and Socket.IO HTTP endpoints.
+    
+    Returns:
+        ASGI3Application: An ASGI application that delegates WebSocket and Socket.IO-path requests to the Socket.IO app and all other HTTP/lifespan requests to the FastAPI app, using the module's default routing conventions.
+    """
+    ...
 
 
 @overload
@@ -269,7 +391,21 @@ def asyncplus(
     debug_hook: DebugHook | None = None,
     socketio_fallback_on_error: bool = False,
     timeout: float | None = None,
-) -> ASGI3Application: ...
+) -> ASGI3Application: """
+    Compose a single ASGI application that routes requests between a FastAPI app and a Socket.IO AsyncServer.
+    
+    Parameters:
+        fastapi_app (FastAPI): The FastAPI application to handle HTTP and lifespan requests.
+        socketio_app (AsyncServer | ASGIApp): A python-socketio AsyncServer or an ASGI application that should handle Socket.IO websocket/http paths.
+        socketio_path (str): The Socket.IO mount path; validated and normalized before use (e.g., "/socket.io/").
+        debug_hook (DebugHook | None): Optional callback invoked with the chosen route and request scope for debugging.
+        socketio_fallback_on_error (bool): If True, fall back to the FastAPI app when handling via Socket.IO raises an exception.
+        timeout (float | None): Optional per-request timeout in seconds applied to the delegated app; if None, no timeout is enforced.
+    
+    Returns:
+        ASGI3Application: An ASGI application that inspects each scope, chooses the appropriate backend ("socketio" or "fastapi"), optionally invokes the debug_hook, and dispatches the request to the selected app with the configured fallback and timeout behavior.
+    """
+    ...
 
 
 def asyncplus(
@@ -282,15 +418,20 @@ def asyncplus(
     timeout: float | None = None,  # seconds; None = no timeout
 ) -> ASGI3Application:
     """
-    Pure function. Same (fastapi_app, socketio_app) → same returned ASGI app.
-
-    No side effects; referentially transparent at call time.
-    Builds the app by composition: _to_asgi_app then a closure that
-    uses pure _route(scope) and a single _dispatch effect.
-
-    Raises ValueError if socketio_path contains invalid characters.
-    timeout: seconds per ASGI call; None = no timeout. On timeout,
-    asyncio.TimeoutError is logged and re-raised (optional circuit breaker).
+    Compose a FastAPI application and a Socket.IO application into a single ASGI app that routes requests to the appropriate backend.
+    
+    Parameters:
+        socketio_path (str): Socket.IO mount path; empty string becomes "/socket.io/". Path is validated and may be normalized (leading slash added if missing).
+        debug_hook (DebugHook | None): Optional callback invoked with the chosen route and ASGI scope for each request.
+        socketio_fallback_on_error (bool): If true, a runtime error while dispatching to the Socket.IO app will cause the request to be retried against the FastAPI app.
+        timeout (float | None): Per-request timeout in seconds for dispatching to the selected app; `None` disables timeouts.
+    
+    Raises:
+        ValueError: If `socketio_path` contains invalid characters.
+        TypeError: If an ASGI scope that is not a dict is passed to the returned application.
+    
+    Returns:
+        ASGI3Application: An ASGI application that inspects each scope, chooses between the Socket.IO and FastAPI handlers, optionally invokes `debug_hook`, and dispatches with the configured fallback and timeout behavior.
     """
     socketio_asgi = _to_asgi_app(socketio_app)
     normalized_socketio_path = _normalize_socketio_path(socketio_path)
@@ -300,6 +441,17 @@ def asyncplus(
         receive: ASGIReceiveCallable,
         send: ASGISendCallable,
     ) -> None:
+        """
+        Route an incoming ASGI connection to either the configured FastAPI app or the Socket.IO ASGI app based on the provided scope and module configuration.
+        
+        Parameters:
+            scope (Scope): ASGI connection scope dictionary.
+            receive (ASGIReceiveCallable): ASGI receive callable.
+            send (ASGISendCallable): ASGI send callable.
+        
+        Raises:
+            TypeError: If `scope` is not a dict.
+        """
         if not isinstance(scope, dict):
             raise TypeError(
                 f"ASGI scope must be dict, got {type(scope).__name__}"
