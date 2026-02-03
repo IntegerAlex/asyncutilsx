@@ -1,5 +1,7 @@
 # asyncutilsx
 
+[![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://codspeed.io/IntegerAlex/asyncutilsx?utm_source=badge)
+
 ASGI wrapper for combining **FastAPI** and **Socket.IO** in one app.
 
 **Author:** Akshat kotpalliwar (alias IntegerAlex)  
@@ -40,6 +42,14 @@ asgi_app = asyncplus(app, sio)
 ```bash
 pip install -e ".[dev]"
 pytest
+```
+
+## Benchmarks
+
+Performance benchmarks are continuously monitored with CodSpeed. To run benchmarks locally:
+
+```bash
+pytest benchmarks/ --codspeed
 ```
 
 ## License
