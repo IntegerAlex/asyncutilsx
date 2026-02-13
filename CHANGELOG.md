@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-02-02
+## [0.2.0] - 2026-02-13
 
 ### Added
 
@@ -31,6 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **FP refactor**: Removed `Router` class and `ImmutableScope`; `router()` is a pure function; `_route(scope, socketio_path)` takes `Scope` directly.
 - **Friendlier error messages**: `socketio_path` validation now suggests “Use a simple path like '/socket.io'” instead of raw “must not contain” message.
 - **Module docstring**: Quickstart example and pointer to `create_app` and `router` (advanced).
+
+### Fixed
+
+- **Syntax errors in docstrings**: Fixed invalid Python syntax where docstrings were placed on the same line as function signatures in `DebugHook.__call__` and `asyncplus` overloads (would prevent module import).
+- **Websocket routing**: Gate websocket routing by path matching (same as HTTP) instead of unconditionally routing all websockets to Socket.IO, preventing interception of non-Socket.IO WebSocket endpoints.
+- **Path matching bug**: Fixed `_matches_socketio_path` handling of root path "/" which caused incorrect matching; now rejects "/" in validation with clear error message.
 
 ### Removed
 
