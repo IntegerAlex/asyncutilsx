@@ -8,6 +8,8 @@ wheels/
 .pytest_cache/
 .coverage
 htmlcov/
+.hypothesis/
 
 # Virtual environments
 .venv
+.gitbotrc.json

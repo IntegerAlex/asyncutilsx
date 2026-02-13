@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "asyncutilsx"
-version = "0.1.0"
+version = "0.2.0"
 description = "ASGI wrapper for combining FastAPI and Socket.IO in one app"
 readme = "README.md"
 license = "LGPL-2.1-only"
@@ -26,6 +26,7 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
 ]
 dependencies = [
+    "asgiref>=3.11.0",
     "fastapi>=0.115.0",
     "python-socketio>=5.11.0",
 ]
@@ -33,6 +34,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "build>=1.4.0",
+    "hypothesis>=6.0",
     "twine>=6.2.0",
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
