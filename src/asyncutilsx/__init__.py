@@ -51,14 +51,15 @@ _logger = logging.getLogger(__name__)
 class DebugHook(Protocol):
     """Protocol for optional routing callback. Enables type-safe debug_hook."""
 
-    def __call__(self, route: Route, scope: Scope) -> None: """
-Invoked with the selected Route and its ASGI scope.
+    def __call__(self, route: Route, scope: Scope) -> None:
+        """
+        Invoked with the selected Route and its ASGI scope.
 
-Parameters:
-    route (Route): The routing target chosen for the current request — either "socketio" or "fastapi".
-    scope (Scope): The ASGI connection scope dictionary for the current request.
-"""
-...
+        Parameters:
+            route (Route): The routing target chosen for the current request — either "socketio" or "fastapi".
+            scope (Scope): The ASGI connection scope dictionary for the current request.
+        """
+        ...
 
 
 def router(
@@ -369,13 +370,14 @@ async def _dispatch(
 def asyncplus(
     fastapi_app: FastAPI,
     socketio_app: AsyncServer | ASGIApp,
-) -> ASGI3Application: """
+) -> ASGI3Application:
+    """
     Create a composed ASGI application that routes incoming ASGI connections between a FastAPI app and a Socket.IO app.
-    
+
     Parameters:
         fastapi_app (FastAPI): The FastAPI application that will handle HTTP requests and lifespan events.
         socketio_app (AsyncServer | ASGIApp): A python-socketio AsyncServer or any ASGI application that will handle WebSocket connections and Socket.IO HTTP endpoints.
-    
+
     Returns:
         ASGI3Application: An ASGI application that delegates WebSocket and Socket.IO-path requests to the Socket.IO app and all other HTTP/lifespan requests to the FastAPI app, using the module's default routing conventions.
     """
@@ -391,9 +393,10 @@ def asyncplus(
     debug_hook: DebugHook | None = None,
     socketio_fallback_on_error: bool = False,
     timeout: float | None = None,
-) -> ASGI3Application: """
+) -> ASGI3Application:
+    """
     Compose a single ASGI application that routes requests between a FastAPI app and a Socket.IO AsyncServer.
-    
+
     Parameters:
         fastapi_app (FastAPI): The FastAPI application to handle HTTP and lifespan requests.
         socketio_app (AsyncServer | ASGIApp): A python-socketio AsyncServer or an ASGI application that should handle Socket.IO websocket/http paths.
@@ -401,7 +404,7 @@ def asyncplus(
         debug_hook (DebugHook | None): Optional callback invoked with the chosen route and request scope for debugging.
         socketio_fallback_on_error (bool): If True, fall back to the FastAPI app when handling via Socket.IO raises an exception.
         timeout (float | None): Optional per-request timeout in seconds applied to the delegated app; if None, no timeout is enforced.
-    
+
     Returns:
         ASGI3Application: An ASGI application that inspects each scope, chooses the appropriate backend ("socketio" or "fastapi"), optionally invokes the debug_hook, and dispatches the request to the selected app with the configured fallback and timeout behavior.
     """
