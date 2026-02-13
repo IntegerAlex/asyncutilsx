@@ -12,3 +12,4 @@ htmlcov/
 
 # Virtual environments
 .venv
+.gitbotrc.json

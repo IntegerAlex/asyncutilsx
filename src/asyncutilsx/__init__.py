@@ -185,11 +185,16 @@ def _validate_socketio_path(socketio_path: str) -> None:
     		and is treated as the default path.
     
     Raises:
-    	ValueError: If `socketio_path` contains control characters (ASCII < 32), a space,
-    		or a tab. The exception message includes the offending path.
+    	ValueError: If `socketio_path` is "/" (too broad) or contains control characters
+    		(ASCII < 32), a space, or a tab. The exception message includes the offending path.
     """
     if not socketio_path:
         return
+    if socketio_path == "/":
+        raise ValueError(
+            "socketio_path cannot be '/' as it would match all paths. "
+            f"Use a specific path like '/socket.io' (got: {socketio_path!r})"
+        )
     invalid_chars = [c for c in socketio_path if ord(c) < 32 or c in (" ", "\t")]
     if invalid_chars:
         raise ValueError(
@@ -241,6 +246,8 @@ def _matches_socketio_path(path: str, socketio_path: str) -> bool:
     """
     base = socketio_path.rstrip("/")
     if not base:
+        # This should not happen as "/" is rejected in _validate_socketio_path
+        # Empty socketio_path is normalized to "/socket.io/" by _normalize_socketio_path
         base = "/"
     return path == base or path.startswith(f"{base}/")
 
@@ -251,7 +258,7 @@ def _route(scope: Scope, socketio_path: str) -> Route:
     
     Determination:
     - If scope.type is "lifespan" -> routes to fastapi.
-    - If scope.type is "websocket" -> routes to socketio.
+    - If scope.type is "websocket" and the request path matches socketio_path -> routes to socketio.
     - If scope.type is "http" and the request path matches socketio_path -> routes to socketio.
     - Otherwise -> routes to fastapi.
     
@@ -269,7 +276,10 @@ def _route(scope: Scope, socketio_path: str) -> Route:
     if scope_type == "lifespan":
         return "fastapi"
     if scope_type == "websocket":
-        return "socketio"
+        # Gate websocket routing by path matching, same as HTTP
+        if _matches_socketio_path(path, socketio_path):
+            return "socketio"
+        return "fastapi"
     if scope_type == "http" and _matches_socketio_path(path, socketio_path):
         return "socketio"
     return "fastapi"

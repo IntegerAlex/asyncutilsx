@@ -34,7 +34,10 @@ class TestRoute:
     """Test pure _route: same scope → same route; does not mutate scope."""
 
     def test_websocket_returns_socketio(self):
-        assert _route({"type": "websocket", "path": "/"}, "/socket.io/") == "socketio"
+        assert _route({"type": "websocket", "path": "/socket.io/"}, "/socket.io/") == "socketio"
+        assert _route({"type": "websocket", "path": "/socket.io"}, "/socket.io/") == "socketio"
+        # Websocket with non-matching path routes to fastapi
+        assert _route({"type": "websocket", "path": "/"}, "/socket.io/") == "fastapi"
 
     def test_http_socketio_path_returns_socketio(self):
         assert _route({"type": "http", "path": "/socket.io/"}, "/socket.io/") == "socketio"
@@ -61,7 +64,8 @@ class TestRoute:
 
     def test_scope_path_none_treated_as_empty_string(self):
         assert _route({"type": "http", "path": None}, "/socket.io/") == "fastapi"
-        assert _route({"type": "websocket", "path": None}, "/socket.io/") == "socketio"
+        # Websocket with None path (treated as empty) doesn't match socketio_path, routes to fastapi
+        assert _route({"type": "websocket", "path": None}, "/socket.io/") == "fastapi"
 
     def test_scope_type_non_string_treated_as_http(self):
         assert _route({"type": 1, "path": "/"}, "/socket.io/") == "fastapi"
@@ -142,9 +146,14 @@ class TestRoutePropertyBased:
 
     @given(scope=_scope_dict)
     @settings(max_examples=200)
-    def test_websocket_type_always_socketio(self, scope):
+    def test_websocket_type_gated_by_path(self, scope):
         scope = {**scope, "type": "websocket"}
-        assert _route(scope, "/socket.io/") == "socketio"
+        # Websocket routing is now gated by path matching, same as HTTP
+        path = scope.get("path", "")
+        if path and (path.startswith("/socket.io/") or path == "/socket.io"):
+            assert _route(scope, "/socket.io/") == "socketio"
+        else:
+            assert _route(scope, "/socket.io/") == "fastapi"
 
     @given(
         path=st.sampled_from([
@@ -259,7 +268,7 @@ class TestAsyncplus:
         sio = AsyncServer(async_mode="asgi")
         combined = asyncplus(FastAPI(), sio)
 
-        scope = {"type": "websocket", "path": "/"}
+        scope = {"type": "websocket", "path": "/socket.io/"}
         receive = AsyncMock(return_value={"type": "websocket.disconnect"})
         send = AsyncMock()
 
