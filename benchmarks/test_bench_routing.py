@@ -12,50 +12,58 @@ from asyncutilsx import _route, _to_asgi_app, asyncplus
 from fastapi import FastAPI
 from socketio.async_server import AsyncServer
 
+SOCKETIO_PATH = "/socket.io/"
+
 
 @pytest.mark.benchmark
-def test_route_http_fastapi():
+def test_route_http_fastapi(benchmark):
     """Benchmark routing decision for HTTP requests to FastAPI."""
     scope = {"type": "http", "path": "/api/users"}
-    _route(scope)
+    benchmark(_route, scope, SOCKETIO_PATH)
 
 
 @pytest.mark.benchmark
-def test_route_http_socketio():
+def test_route_http_socketio(benchmark):
     """Benchmark routing decision for HTTP requests to Socket.IO."""
     scope = {"type": "http", "path": "/socket.io/?EIO=4"}
-    _route(scope)
+    benchmark(_route, scope, SOCKETIO_PATH)
 
 
 @pytest.mark.benchmark
-def test_route_websocket():
-    """Benchmark routing decision for WebSocket connections."""
+def test_route_websocket_socketio_path(benchmark):
+    """Benchmark routing decision for WebSocket to Socket.IO path."""
+    scope = {"type": "websocket", "path": "/socket.io/"}
+    benchmark(_route, scope, SOCKETIO_PATH)
+
+
+@pytest.mark.benchmark
+def test_route_websocket_other_path(benchmark):
+    """Benchmark routing decision for WebSocket to non-Socket.IO path."""
     scope = {"type": "websocket", "path": "/ws"}
-    _route(scope)
+    benchmark(_route, scope, SOCKETIO_PATH)
 
 
 @pytest.mark.benchmark
-def test_route_edge_case_none():
-    """Benchmark routing decision for edge case (None scope)."""
-    _route(None)
-
-
-@pytest.mark.benchmark
-def test_route_edge_case_empty():
+def test_route_edge_case_empty(benchmark):
     """Benchmark routing decision for edge case (empty scope)."""
-    _route({})
+    scope = {}
+    benchmark(_route, scope, SOCKETIO_PATH)
 
 
 @pytest.mark.benchmark
-def test_to_asgi_app_wrap():
+def test_to_asgi_app_wrap(benchmark):
     """Benchmark wrapping AsyncServer in ASGIApp."""
     sio = AsyncServer(async_mode="asgi")
-    _to_asgi_app(sio)
+    benchmark(_to_asgi_app, sio)
 
 
 @pytest.mark.benchmark
-def test_asyncplus_creation():
+def test_asyncplus_creation(benchmark):
     """Benchmark creating the combined ASGI app."""
     app = FastAPI()
     sio = AsyncServer(async_mode="asgi")
-    asyncplus(app, sio)
+
+    def create():
+        return asyncplus(app, sio)
+
+    benchmark(create)

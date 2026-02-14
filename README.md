@@ -41,7 +41,7 @@ pip install asyncutilsx
 ```python
 from fastapi import FastAPI
 from socketio import AsyncServer
-from asyncutilsx import asyncplus
+from asyncutilsx import asyncplus, create_app
 
 app = FastAPI()
 sio = AsyncServer(async_mode="asgi")
@@ -54,9 +54,11 @@ asgi_app = asyncplus(app, sio)
 # Run with: uvicorn asgi:asgi_app
 ```
 
+Or use the convenience helper: `asgi_app = create_app(app, sio)`.
+
 - **HTTP** (except `/socket.io/*`) → FastAPI  
 - **HTTP** `/socket.io/*` → Socket.IO (polling)  
-- **WebSocket** → Socket.IO  
+- **WebSocket** (path matching `socketio_path`) → Socket.IO; other WebSocket paths → FastAPI  
 
 Optional: `asyncplus(app, sio, socketio_path="/custom/", debug_hook=..., socketio_fallback_on_error=False, timeout=30.0)`.
 
@@ -73,11 +75,24 @@ pytest
 
 ## Benchmarks
 
-Performance benchmarks are continuously monitored with CodSpeed. To run benchmarks locally:
+Performance benchmarks are continuously monitored with [CodSpeed](https://codspeed.io/IntegerAlex/asyncutilsx). To run benchmarks locally:
 
 ```bash
 pytest benchmarks/ --codspeed
 ```
+
+### asyncplus vs FastAPI mount
+
+The suite includes direct comparisons between **asyncplus** and the **FastAPI mount workaround** (`app.mount("/socket.io", socket_app)`) on the same scenarios:
+
+| Scenario | What’s measured |
+|--------|------------------|
+| HTTP to FastAPI (`/`) | Full ASGI dispatch to your FastAPI app |
+| HTTP to Socket.IO (`/socket.io/`) | Dispatch to the Socket.IO ASGI app |
+| WebSocket to Socket.IO (`/socket.io/`) | Dispatch to Socket.IO for the WebSocket |
+| App creation | Time to build the combined ASGI app |
+
+Same scopes and mocks are used for both approaches so results are comparable. See `benchmarks/test_bench_asyncplus_vs_mount.py`.
 
 ## License
 

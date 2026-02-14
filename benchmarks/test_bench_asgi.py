@@ -61,7 +61,7 @@ async def test_asgi_dispatch_websocket(benchmark):
     sio = AsyncServer(async_mode="asgi")
     combined = asyncplus(app, sio)
     
-    scope = {"type": "websocket", "path": "/"}
+    scope = {"type": "websocket", "path": "/socket.io/"}
     receive = AsyncMock(return_value={"type": "websocket.disconnect"})
     send = AsyncMock()
     
