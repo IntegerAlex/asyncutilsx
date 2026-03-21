@@ -21,7 +21,7 @@ Designed around functional principles:
 - Pure core: routing decision is a pure, total function (same scope → same route).
 - Isolated effects: I/O (ASGI call) happens only at the boundary in one place.
 - Immutable: scope and captured values are never mutated.
-- Composition: asyncutilsx composes _to_asgi_app and a closure over _route + dispatch.
+- Composition: asyncutilsx composes _to_asgi_app and a closure over _route_with_precomputed_path + dispatch.
 """
 
 from collections.abc import Callable, Sequence
@@ -303,45 +303,31 @@ def _normalize_socketio_path(socketio_path: str) -> str:
     return socketio_path
 
 
-def _matches_socketio_path(path: str, socketio_path: str) -> bool:
-    # Match /path, /path/, /path/...; empty socketio_path -> "/" only.
-    # socketio_path is pre-normalized (leading slash) by _normalize_socketio_path.
+def _route_with_precomputed_path(
+    scope: Scope, sio_base: str, sio_base_slash: str
+) -> Route:
     """
-    Determine whether a request path targets the configured Socket.IO path or any of its subpaths.
-    
-    Parameters:
-        path (str): The incoming request path (e.g., "/socket.io/", "/socket.io/123").
-        socketio_path (str): The configured Socket.IO path, expected to be normalized with a leading
-            "/" (an empty value is treated as the root "/").
-    
-    Returns:
-        bool: `True` if `path` exactly equals the normalized base socketio path or starts with the
-        base followed by "/", `False` otherwise.
-    """
-    base = socketio_path.rstrip("/")
-    if not base:
-        # This should not happen as "/" is rejected in _validate_socketio_path
-        # Empty socketio_path is normalized to "/socket.io/" by _normalize_socketio_path
-        base = "/"
-    return path == base or path.startswith(f"{base}/")
+    Core routing decision using pre-computed Socket.IO base path strings.
 
+    This is the single source of truth for the ``_route`` / ``asyncplus`` routing
+    decision.  Callers that run on the hot path (e.g. ``asyncplus``) should
+    pre-compute *sio_base* and *sio_base_slash* once at startup and pass them in
+    on every call to avoid per-request string allocations.
 
-def _route(scope: Scope, socketio_path: str) -> Route:
-    """
-    Selects which application ("socketio" or "fastapi") should handle the given ASGI scope.
-    
     Determination:
     - If scope.type is "lifespan" -> routes to fastapi.
-    - If scope.type is "websocket" and the request path matches socketio_path -> routes to socketio.
-    - If scope.type is "http" and the request path matches socketio_path -> routes to socketio.
+    - If scope.type is "websocket" and path matches the Socket.IO base -> routes to socketio.
+    - If scope.type is "http" and path matches the Socket.IO base -> routes to socketio.
     - Otherwise -> routes to fastapi.
-    
+
     Parameters:
         scope (Scope): ASGI scope dictionary; missing or non-string fields are treated as absent.
-        socketio_path (str): Configured Socket.IO base path used to decide http routing.
-    
+        sio_base (str): Socket.IO base path with trailing slash stripped (e.g. ``"/socket.io"``).
+        sio_base_slash (str): *sio_base* with a trailing slash appended (e.g. ``"/socket.io/"``).
+
     Returns:
-        Route: `"socketio"` when the scope targets the Socket.IO application, `"fastapi"` otherwise.
+        Route: ``"socketio"`` when the scope targets the Socket.IO application,
+        ``"fastapi"`` otherwise.
     """
     raw_type = scope.get("type", "http")
     raw_path = scope.get("path", "")  # optional in ASGI for non-http/websocket
@@ -349,14 +335,40 @@ def _route(scope: Scope, socketio_path: str) -> Route:
     path = raw_path if isinstance(raw_path, str) else ""
     if scope_type == "lifespan":
         return "fastapi"
+    is_sio = path == sio_base or path.startswith(sio_base_slash)
     if scope_type == "websocket":
-        # Gate websocket routing by path matching, same as HTTP
-        if _matches_socketio_path(path, socketio_path):
-            return "socketio"
-        return "fastapi"
-    if scope_type == "http" and _matches_socketio_path(path, socketio_path):
+        # Gate websocket routing by path matching, same as HTTP.
+        return "socketio" if is_sio else "fastapi"
+    if scope_type == "http" and is_sio:
         return "socketio"
     return "fastapi"
+
+
+def _route(scope: Scope, socketio_path: str) -> Route:
+    """
+    Selects which application ("socketio" or "fastapi") should handle the given ASGI scope.
+
+    Thin wrapper around :func:`_route_with_precomputed_path` that derives the
+    pre-computed base strings from *socketio_path* on each call.  Code on the hot
+    path (``asyncplus``) should pre-compute these strings once and call
+    :func:`_route_with_precomputed_path` directly.
+
+    Determination:
+    - If scope.type is "lifespan" -> routes to fastapi.
+    - If scope.type is "websocket" and the request path matches socketio_path -> routes to socketio.
+    - If scope.type is "http" and the request path matches socketio_path -> routes to socketio.
+    - Otherwise -> routes to fastapi.
+
+    Parameters:
+        scope (Scope): ASGI scope dictionary; missing or non-string fields are treated as absent.
+        socketio_path (str): Configured Socket.IO base path used to decide http routing.
+
+    Returns:
+        Route: ``"socketio"`` when the scope targets the Socket.IO application,
+        ``"fastapi"`` otherwise.
+    """
+    base = socketio_path.rstrip("/") or "/"
+    return _route_with_precomputed_path(scope, base, f"{base}/")
 
 
 async def _dispatch(
@@ -556,17 +568,8 @@ def asyncplus(
             await _multiplex_lifespan(scope, receive, send, fastapi_app, socketio_asgi)
             return
 
-        # Use pre-computed base strings — no string allocation on the hot path.
-        raw_path = scope.get("path", "")
-        path = raw_path if isinstance(raw_path, str) else ""
-        is_sio = path == _sio_base or path.startswith(_sio_base_slash)
-
-        if scope_type == "websocket":
-            route: Route = "socketio" if is_sio else "fastapi"
-        elif scope_type == "http" and is_sio:
-            route = "socketio"
-        else:
-            route = "fastapi"
+        # Delegate to the shared helper with pre-computed strings — no per-request allocation.
+        route = _route_with_precomputed_path(scope, _sio_base, _sio_base_slash)
 
         if debug_hook is not None:
             debug_hook(route, scope)
