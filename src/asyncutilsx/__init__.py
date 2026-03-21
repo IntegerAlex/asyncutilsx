@@ -140,6 +140,10 @@ async def _multiplex_lifespan(
     receives the shutdown event and signals completion.  An app that returns
     without sending a startup.complete event (i.e. does not implement lifespan)
     is treated as successfully started so it does not block the other app.
+    Startup failures and shutdown failures are tracked separately; the server
+    receives ``lifespan.startup.failed`` or ``lifespan.shutdown.failed`` with a
+    combined message whenever any inner app reports or raises a failure for that
+    phase.
 
     Parameters:
         scope (Scope): The lifespan ASGI scope.
@@ -154,11 +158,12 @@ async def _multiplex_lifespan(
     startup2: asyncio.Event = asyncio.Event()
     shutdown1: asyncio.Event = asyncio.Event()
     shutdown2: asyncio.Event = asyncio.Event()
-    failed: list[str] = []
+    startup_failed: list[str] = []
+    shutdown_failed: list[str] = []
 
     async def _run(
         app: ASGI3Application,
-        q: asyncio.Queue,
+        q: asyncio.Queue[object],
         startup_ev: asyncio.Event,
         shutdown_ev: asyncio.Event,
     ) -> None:
@@ -170,18 +175,27 @@ async def _multiplex_lifespan(
             if t == "lifespan.startup.complete":
                 startup_ev.set()
             elif t == "lifespan.startup.failed":
-                failed.append(
+                startup_failed.append(
                     event.get("message", "") if isinstance(event, dict) else ""
                 )
                 startup_ev.set()
-            elif t in ("lifespan.shutdown.complete", "lifespan.shutdown.failed"):
+            elif t == "lifespan.shutdown.complete":
+                shutdown_ev.set()
+            elif t == "lifespan.shutdown.failed":
+                shutdown_failed.append(
+                    event.get("message", "") if isinstance(event, dict) else ""
+                )
                 shutdown_ev.set()
 
         try:
             await app(scope, _recv, _send)
         except Exception as exc:
             _logger.warning("Lifespan app raised an exception: %s", exc, exc_info=True)
-            failed.append(str(exc))
+            # Route the exception to the appropriate phase failure list.
+            if not startup_ev.is_set():
+                startup_failed.append(str(exc))
+            else:
+                shutdown_failed.append(str(exc))
         finally:
             # Ensure events are set even if the app returned or raised without
             # calling send, so the main coroutine is never left waiting.
@@ -198,8 +212,8 @@ async def _multiplex_lifespan(
 
         await asyncio.gather(startup1.wait(), startup2.wait())
 
-        if failed:
-            await send({"type": "lifespan.startup.failed", "message": "; ".join(failed)})
+        if startup_failed:
+            await send({"type": "lifespan.startup.failed", "message": "; ".join(startup_failed)})
             return
 
         await send({"type": "lifespan.startup.complete"})
@@ -209,7 +223,11 @@ async def _multiplex_lifespan(
         await q2.put(shutdown_event)
 
         await asyncio.gather(shutdown1.wait(), shutdown2.wait())
-        await send({"type": "lifespan.shutdown.complete"})
+
+        if shutdown_failed:
+            await send({"type": "lifespan.shutdown.failed", "message": "; ".join(shutdown_failed)})
+        else:
+            await send({"type": "lifespan.shutdown.complete"})
     finally:
         for task in (task1, task2):
             if not task.done():

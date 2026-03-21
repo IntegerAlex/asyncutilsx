@@ -574,8 +574,70 @@ class TestLifespanMultiplexer:
         send.assert_any_call({"type": "lifespan.startup.complete"})
         send.assert_any_call({"type": "lifespan.shutdown.complete"})
 
+    @pytest.mark.asyncio
+    async def test_shutdown_failed_propagates(self):
+        """lifespan.shutdown.failed from an inner app must propagate to the server."""
+        async def failing_shutdown_app(scope, receive, send):
+            await receive()
+            await send({"type": "lifespan.startup.complete"})
+            await receive()
+            await send({"type": "lifespan.shutdown.failed", "message": "shutdown error"})
 
-# --- health_check_route() was intentionally removed -------------------------
+        async def ok_app(scope, receive, send):
+            await receive()
+            await send({"type": "lifespan.startup.complete"})
+            await receive()
+            await send({"type": "lifespan.shutdown.complete"})
+
+        events = [
+            {"type": "lifespan.startup"},
+            {"type": "lifespan.shutdown"},
+        ]
+        receive = AsyncMock(side_effect=events)
+        send = AsyncMock()
+
+        await _multiplex_lifespan(
+            {"type": "lifespan"}, receive, send, failing_shutdown_app, ok_app
+        )
+
+        calls = [c.args[0]["type"] for c in send.call_args_list]
+        assert "lifespan.startup.complete" in calls
+        assert "lifespan.shutdown.failed" in calls
+        assert "lifespan.shutdown.complete" not in calls
+
+    @pytest.mark.asyncio
+    async def test_shutdown_exception_propagates_as_failed(self):
+        """An exception raised by an app during shutdown must produce shutdown.failed."""
+        async def raising_shutdown_app(scope, receive, send):
+            await receive()
+            await send({"type": "lifespan.startup.complete"})
+            await receive()
+            raise RuntimeError("crash during shutdown")
+
+        async def ok_app(scope, receive, send):
+            await receive()
+            await send({"type": "lifespan.startup.complete"})
+            await receive()
+            await send({"type": "lifespan.shutdown.complete"})
+
+        events = [
+            {"type": "lifespan.startup"},
+            {"type": "lifespan.shutdown"},
+        ]
+        receive = AsyncMock(side_effect=events)
+        send = AsyncMock()
+
+        await _multiplex_lifespan(
+            {"type": "lifespan"}, receive, send, raising_shutdown_app, ok_app
+        )
+
+        calls = [c.args[0]["type"] for c in send.call_args_list]
+        assert "lifespan.startup.complete" in calls
+        assert "lifespan.shutdown.failed" in calls
+        assert "lifespan.shutdown.complete" not in calls
+
+
+
 # Users who need a /health endpoint can add one line of code in their own app.
 
 
