@@ -40,7 +40,7 @@ from socketio.asgi import ASGIApp
 from socketio.async_server import AsyncServer
 
 __version__ = "0.2.0"
-__all__ = ["asyncplus", "create_app", "router", "DebugHook", "health_check_route"]
+__all__ = ["asyncplus", "create_app", "router", "DebugHook"]
 
 # Type for routing decision only. Keeps invalid routes unrepresentable.
 # Literal type (no class), so __slots__ does not apply.
@@ -126,39 +126,95 @@ def create_app(
     return asyncplus(fastapi_app, socketio_server)
 
 
-def health_check_route() -> (
-    tuple[Callable[[Scope], bool], ASGI3Application]
-):
+async def _multiplex_lifespan(
+    scope: Scope,
+    receive: ASGIReceiveCallable,
+    send: ASGISendCallable,
+    app1: ASGI3Application,
+    app2: ASGI3Application,
+) -> None:
     """
-    Provide a predicate and ASGI application that implement a plain-text "/health" HTTP endpoint.
-    
-    The predicate returns True when the incoming scope's "path" equals "/health". The ASGI application responds with HTTP 200 and a plain-text body "OK".
-    
-    Returns:
-        tuple[Callable[[Scope], bool], ASGI3Application]: (predicate, app) pair for routing the "/health" endpoint.
-    """
+    Fan out the ASGI lifespan scope to two applications concurrently.
 
-    async def health_app(
-        scope: Scope,
-        receive: ASGIReceiveCallable,
-        send: ASGISendCallable,
+    Each app receives the startup event, signals completion (or failure), then
+    receives the shutdown event and signals completion.  An app that returns
+    without sending a startup.complete event (i.e. does not implement lifespan)
+    is treated as successfully started so it does not block the other app.
+
+    Parameters:
+        scope (Scope): The lifespan ASGI scope.
+        receive (ASGIReceiveCallable): Callable to receive lifespan events from the server.
+        send (ASGISendCallable): Callable to send lifespan events to the server.
+        app1 (ASGI3Application): First ASGI application (typically the FastAPI app).
+        app2 (ASGI3Application): Second ASGI application (typically the Socket.IO ASGI app).
+    """
+    q1: asyncio.Queue[object] = asyncio.Queue()
+    q2: asyncio.Queue[object] = asyncio.Queue()
+    startup1: asyncio.Event = asyncio.Event()
+    startup2: asyncio.Event = asyncio.Event()
+    shutdown1: asyncio.Event = asyncio.Event()
+    shutdown2: asyncio.Event = asyncio.Event()
+    failed: list[str] = []
+
+    async def _run(
+        app: ASGI3Application,
+        q: asyncio.Queue,
+        startup_ev: asyncio.Event,
+        shutdown_ev: asyncio.Event,
     ) -> None:
-        """
-        Responds to an HTTP request with a plain-text "OK" body.
-        
-        Sends an HTTP 200 response with header `Content-Type: text/plain` and the body "OK".
-        """
-        await send({
-            "type": "http.response.start",
-            "status": 200,
-            "headers": [[b"content-type", b"text/plain"]],
-        })
-        await send({
-            "type": "http.response.body",
-            "body": b"OK",
-        })
+        async def _recv() -> object:
+            return await q.get()
 
-    return (lambda s: s.get("path") == "/health", health_app)
+        async def _send(event: object) -> None:
+            t = event.get("type", "") if isinstance(event, dict) else ""
+            if t == "lifespan.startup.complete":
+                startup_ev.set()
+            elif t == "lifespan.startup.failed":
+                failed.append(
+                    event.get("message", "") if isinstance(event, dict) else ""
+                )
+                startup_ev.set()
+            elif t in ("lifespan.shutdown.complete", "lifespan.shutdown.failed"):
+                shutdown_ev.set()
+
+        try:
+            await app(scope, _recv, _send)
+        except Exception as exc:
+            _logger.warning("Lifespan app raised an exception: %s", exc, exc_info=True)
+            failed.append(str(exc))
+        finally:
+            # Ensure events are set even if the app returned or raised without
+            # calling send, so the main coroutine is never left waiting.
+            startup_ev.set()
+            shutdown_ev.set()
+
+    task1 = asyncio.ensure_future(_run(app1, q1, startup1, shutdown1))
+    task2 = asyncio.ensure_future(_run(app2, q2, startup2, shutdown2))
+
+    try:
+        startup_event = await receive()
+        await q1.put(startup_event)
+        await q2.put(startup_event)
+
+        await asyncio.gather(startup1.wait(), startup2.wait())
+
+        if failed:
+            await send({"type": "lifespan.startup.failed", "message": "; ".join(failed)})
+            return
+
+        await send({"type": "lifespan.startup.complete"})
+
+        shutdown_event = await receive()
+        await q1.put(shutdown_event)
+        await q2.put(shutdown_event)
+
+        await asyncio.gather(shutdown1.wait(), shutdown2.wait())
+        await send({"type": "lifespan.shutdown.complete"})
+    finally:
+        for task in (task1, task2):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(task1, task2, return_exceptions=True)
 
 
 def _to_asgi_app(socketio_app: AsyncServer | ASGIApp) -> ASGIApp:
@@ -449,6 +505,10 @@ def asyncplus(
     socketio_asgi = _to_asgi_app(socketio_app)
     normalized_socketio_path = _normalize_socketio_path(socketio_path)
 
+    # Pre-compute once at startup; zero allocations on the hot path.
+    _sio_base = normalized_socketio_path.rstrip("/")
+    _sio_base_slash = f"{_sio_base}/"
+
     async def asgi_app(
         scope: Scope,
         receive: ASGIReceiveCallable,
@@ -469,7 +529,27 @@ def asyncplus(
             raise TypeError(
                 f"ASGI scope must be dict, got {type(scope).__name__}"
             )
-        route = _route(scope, normalized_socketio_path)
+
+        raw_type = scope.get("type", "http")
+        scope_type = raw_type if isinstance(raw_type, str) else "http"
+
+        # Lifespan is multiplexed to both apps so each can run startup/shutdown.
+        if scope_type == "lifespan":
+            await _multiplex_lifespan(scope, receive, send, fastapi_app, socketio_asgi)
+            return
+
+        # Use pre-computed base strings — no string allocation on the hot path.
+        raw_path = scope.get("path", "")
+        path = raw_path if isinstance(raw_path, str) else ""
+        is_sio = path == _sio_base or path.startswith(_sio_base_slash)
+
+        if scope_type == "websocket":
+            route: Route = "socketio" if is_sio else "fastapi"
+        elif scope_type == "http" and is_sio:
+            route = "socketio"
+        else:
+            route = "fastapi"
+
         if debug_hook is not None:
             debug_hook(route, scope)
         await _dispatch(
