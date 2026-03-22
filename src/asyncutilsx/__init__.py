@@ -565,6 +565,10 @@ def asyncplus(
 
         # Lifespan is multiplexed to both apps so each can run startup/shutdown.
         if scope_type == "lifespan":
+            if debug_hook is not None:
+                # Also invoke the debug hook for lifespan scopes so the "for each
+                # request" contract applies to all incoming ASGI connections.
+                debug_hook("lifespan", scope)  # type: ignore[arg-type]
             await _multiplex_lifespan(scope, receive, send, fastapi_app, socketio_asgi)
             return
 
