@@ -202,8 +202,8 @@ async def _multiplex_lifespan(
             startup_ev.set()
             shutdown_ev.set()
 
-    task1 = asyncio.ensure_future(_run(app1, q1, startup1, shutdown1))
-    task2 = asyncio.ensure_future(_run(app2, q2, startup2, shutdown2))
+    task1 = asyncio.create_task(_run(app1, q1, startup1, shutdown1))
+    task2 = asyncio.create_task(_run(app2, q2, startup2, shutdown2))
 
     try:
         startup_event = await receive()
