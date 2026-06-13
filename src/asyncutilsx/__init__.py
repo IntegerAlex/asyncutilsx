@@ -39,7 +39,7 @@ from fastapi import FastAPI
 from socketio.asgi import ASGIApp
 from socketio.async_server import AsyncServer
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = ["asyncplus", "create_app", "router", "DebugHook"]
 
 # Type for routing decision only. Keeps invalid routes unrepresentable.

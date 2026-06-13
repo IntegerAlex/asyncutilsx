@@ -9,6 +9,10 @@ ASGI wrapper for combining **FastAPI** and **Socket.IO** in one app.
 
 Minimal and composable: one core function, isolated effects at the ASGI boundary.
 
+### Breaking changes (v0.3.0)
+
+`health_check_route` has been removed from the public API. Add your own `/health` endpoint directly in your FastAPI app instead. See [docs/user_guide.md](docs/user_guide.md) for details.
+
 ## Why asyncplus() / asyncutilsx?
 
 **Scenario: real-time chat app with REST API**
