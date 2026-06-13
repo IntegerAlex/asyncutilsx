@@ -1,6 +1,6 @@
 # asyncutilsx User Guide
 
-Common patterns and usage for combining FastAPI and Socket.IO with **asyncplus**, **create_app**, **router**, and **health_check_route**.
+Common patterns and usage for combining FastAPI and Socket.IO with **asyncplus**, **create_app**, and **router**.
 
 ---
 
@@ -30,7 +30,8 @@ Or use `asyncplus(app, sio)` directly (same result).
 
 - HTTP (except `/socket.io/*`) → FastAPI  
 - HTTP `/socket.io/*` → Socket.IO (polling)  
-- WebSocket → Socket.IO  
+- WebSocket → Socket.IO (if path matches `socketio_path`)  
+- Lifespan → both apps (startup/shutdown events are multiplexed)
 
 ---
 
@@ -135,15 +136,28 @@ asgi_app = asyncplus(
 
 ---
 
-## Health check (production)
+## Lifespan (startup / shutdown)
 
-Use **health_check_route()** with **router()** to add a `/health` endpoint:
+`asyncplus` automatically multiplexes the ASGI lifespan scope to **both** the FastAPI app and the Socket.IO ASGI app.  No extra configuration is needed — each app's `startup` and `shutdown` handlers run normally:
 
 ```python
-from asyncutilsx import router, health_check_route
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from socketio import AsyncServer
+from asyncutilsx import asyncplus
 
-routes = [health_check_route(), (is_socketio, sio_app)]
-asgi_app = router(routes, default_app=fastapi_app)
+@asynccontextmanager
+async def lifespan(app):
+    # startup
+    print("FastAPI startup")
+    yield
+    # shutdown
+    print("FastAPI shutdown")
+
+app = FastAPI(lifespan=lifespan)
+sio = AsyncServer(async_mode="asgi")
+asgi_app = asyncplus(app, sio)
+# Both FastAPI and Socket.IO receive the lifespan events.
 ```
 
 ---
@@ -158,5 +172,4 @@ asgi_app = router(routes, default_app=fastapi_app)
 | Trace routing | `debug_hook=your_callback` |
 | Fallback on Socket.IO error | `socketio_fallback_on_error=True` |
 | Fail fast on hung requests | `timeout=30.0` |
-| /health endpoint | `health_check_route()` + `router()` |
 | Custom routing (SSE, gRPC, etc.) | `router(routes, default_app=...)` |

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "asyncutilsx"
-version = "0.2.0"
+version = "0.3.0"
 description = "ASGI wrapper for combining FastAPI and Socket.IO in one app"
 readme = "README.md"
 license = "LGPL-2.1-only"

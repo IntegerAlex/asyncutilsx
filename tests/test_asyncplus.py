@@ -17,10 +17,10 @@ from hypothesis import strategies as st
 from asyncutilsx import (
     asyncplus,
     create_app,
-    health_check_route,
     router,
     _route,
     _to_asgi_app,
+    _multiplex_lifespan,
 )
 from fastapi import FastAPI
 from socketio.asgi import ASGIApp
@@ -444,28 +444,201 @@ class TestAsyncplus:
         await combined(scope, receive, send)
 
 
-# --- health_check_route() -----------------------------------------------------
+# --- _multiplex_lifespan() ---------------------------------------------------
 
 
-class TestHealthCheckRoute:
+class TestLifespanMultiplexer:
+    """Test that _multiplex_lifespan fans out lifespan events to both apps."""
+
     @pytest.mark.asyncio
-    async def test_health_check_route_returns_200_ok(self):
-        predicate, health_app = health_check_route()
-        assert predicate({"path": "/health"})
-        assert not predicate({"path": "/"})
-        scope = {"type": "http", "path": "/health", "method": "GET"}
-        receive = AsyncMock(return_value={"type": "http.request"})
+    async def test_both_apps_receive_startup_and_shutdown(self):
+        started = []
+        stopped = []
+
+        async def make_app(name):
+            async def app(scope, receive, send):
+                event = await receive()
+                assert event["type"] == "lifespan.startup"
+                started.append(name)
+                await send({"type": "lifespan.startup.complete"})
+                event = await receive()
+                assert event["type"] == "lifespan.shutdown"
+                stopped.append(name)
+                await send({"type": "lifespan.shutdown.complete"})
+            return app
+
+        app1 = await make_app("app1")
+        app2 = await make_app("app2")
+
+        events = [
+            {"type": "lifespan.startup"},
+            {"type": "lifespan.shutdown"},
+        ]
+        receive = AsyncMock(side_effect=events)
         send = AsyncMock()
-        await health_app(scope, receive, send)
-        send.assert_any_call({
-            "type": "http.response.start",
-            "status": 200,
-            "headers": [[b"content-type", b"text/plain"]],
-        })
-        send.assert_any_call({
-            "type": "http.response.body",
-            "body": b"OK",
-        })
+
+        await _multiplex_lifespan({"type": "lifespan"}, receive, send, app1, app2)
+
+        assert set(started) == {"app1", "app2"}
+        assert set(stopped) == {"app1", "app2"}
+        send.assert_any_call({"type": "lifespan.startup.complete"})
+        send.assert_any_call({"type": "lifespan.shutdown.complete"})
+
+    @pytest.mark.asyncio
+    async def test_startup_failed_propagates(self):
+        async def failing_app(scope, receive, send):
+            await receive()
+            await send({"type": "lifespan.startup.failed", "message": "oops"})
+
+        async def ok_app(scope, receive, send):
+            await receive()
+            await send({"type": "lifespan.startup.complete"})
+            await receive()
+            await send({"type": "lifespan.shutdown.complete"})
+
+        events = [{"type": "lifespan.startup"}]
+        receive = AsyncMock(side_effect=events)
+        send = AsyncMock()
+
+        await _multiplex_lifespan({"type": "lifespan"}, receive, send, failing_app, ok_app)
+
+        calls = [c.args[0]["type"] for c in send.call_args_list]
+        assert "lifespan.startup.failed" in calls
+        assert "lifespan.startup.complete" not in calls
+
+    @pytest.mark.asyncio
+    async def test_app_without_lifespan_support_does_not_block(self):
+        """An app that returns immediately without sending events should not block."""
+        async def no_lifespan_app(scope, receive, send):
+            return  # doesn't call receive or send
+
+        async def normal_app(scope, receive, send):
+            await receive()
+            await send({"type": "lifespan.startup.complete"})
+            await receive()
+            await send({"type": "lifespan.shutdown.complete"})
+
+        events = [
+            {"type": "lifespan.startup"},
+            {"type": "lifespan.shutdown"},
+        ]
+        receive = AsyncMock(side_effect=events)
+        send = AsyncMock()
+
+        await _multiplex_lifespan(
+            {"type": "lifespan"}, receive, send, normal_app, no_lifespan_app
+        )
+
+        send.assert_any_call({"type": "lifespan.startup.complete"})
+        send.assert_any_call({"type": "lifespan.shutdown.complete"})
+
+    @pytest.mark.asyncio
+    async def test_asyncplus_lifespan_reaches_both_apps(self):
+        """asyncplus routes lifespan to both FastAPI and Socket.IO apps."""
+        fastapi_started = []
+        socketio_started = []
+
+        async def fake_fastapi(scope, receive, send):
+            if scope.get("type") == "lifespan":
+                await receive()
+                fastapi_started.append(True)
+                await send({"type": "lifespan.startup.complete"})
+                await receive()
+                await send({"type": "lifespan.shutdown.complete"})
+
+        async def fake_socketio(scope, receive, send):
+            if scope.get("type") == "lifespan":
+                await receive()
+                socketio_started.append(True)
+                await send({"type": "lifespan.startup.complete"})
+                await receive()
+                await send({"type": "lifespan.shutdown.complete"})
+
+        fastapi_app = MagicMock()
+        fastapi_app.side_effect = fake_fastapi
+        sio_asgi = AsyncMock(side_effect=fake_socketio)
+
+        combined = asyncplus(fastapi_app, sio_asgi)
+
+        events = [
+            {"type": "lifespan.startup"},
+            {"type": "lifespan.shutdown"},
+        ]
+        receive = AsyncMock(side_effect=events)
+        send = AsyncMock()
+
+        await combined({"type": "lifespan"}, receive, send)
+
+        assert fastapi_started == [True]
+        assert socketio_started == [True]
+        send.assert_any_call({"type": "lifespan.startup.complete"})
+        send.assert_any_call({"type": "lifespan.shutdown.complete"})
+
+    @pytest.mark.asyncio
+    async def test_shutdown_failed_propagates(self):
+        """lifespan.shutdown.failed from an inner app must propagate to the server."""
+        async def failing_shutdown_app(scope, receive, send):
+            await receive()
+            await send({"type": "lifespan.startup.complete"})
+            await receive()
+            await send({"type": "lifespan.shutdown.failed", "message": "shutdown error"})
+
+        async def ok_app(scope, receive, send):
+            await receive()
+            await send({"type": "lifespan.startup.complete"})
+            await receive()
+            await send({"type": "lifespan.shutdown.complete"})
+
+        events = [
+            {"type": "lifespan.startup"},
+            {"type": "lifespan.shutdown"},
+        ]
+        receive = AsyncMock(side_effect=events)
+        send = AsyncMock()
+
+        await _multiplex_lifespan(
+            {"type": "lifespan"}, receive, send, failing_shutdown_app, ok_app
+        )
+
+        calls = [c.args[0]["type"] for c in send.call_args_list]
+        assert "lifespan.startup.complete" in calls
+        assert "lifespan.shutdown.failed" in calls
+        assert "lifespan.shutdown.complete" not in calls
+
+    @pytest.mark.asyncio
+    async def test_shutdown_exception_propagates_as_failed(self):
+        """An exception raised by an app during shutdown must produce shutdown.failed."""
+        async def raising_shutdown_app(scope, receive, send):
+            await receive()
+            await send({"type": "lifespan.startup.complete"})
+            await receive()
+            raise RuntimeError("crash during shutdown")
+
+        async def ok_app(scope, receive, send):
+            await receive()
+            await send({"type": "lifespan.startup.complete"})
+            await receive()
+            await send({"type": "lifespan.shutdown.complete"})
+
+        events = [
+            {"type": "lifespan.startup"},
+            {"type": "lifespan.shutdown"},
+        ]
+        receive = AsyncMock(side_effect=events)
+        send = AsyncMock()
+
+        await _multiplex_lifespan(
+            {"type": "lifespan"}, receive, send, raising_shutdown_app, ok_app
+        )
+
+        calls = [c.args[0]["type"] for c in send.call_args_list]
+        assert "lifespan.startup.complete" in calls
+        assert "lifespan.shutdown.failed" in calls
+        assert "lifespan.shutdown.complete" not in calls
+
+
+
+# Users who need a /health endpoint can add one line of code in their own app.
 
 
 # --- router() -----------------------------------------------------------------

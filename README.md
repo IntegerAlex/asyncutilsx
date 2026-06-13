@@ -7,7 +7,11 @@ ASGI wrapper for combining **FastAPI** and **Socket.IO** in one app.
 **Author:** Akshat kotpalliwar (alias IntegerAlex)  
 **SPDX-License-Identifier:** LGPL-2.1-only
 
-Minimal and pure: one function, no side effects.
+Minimal and composable: one core function, isolated effects at the ASGI boundary.
+
+### Breaking changes (v0.3.0)
+
+`health_check_route` has been removed from the public API. Add your own `/health` endpoint directly in your FastAPI app instead. See [docs/user_guide.md](docs/user_guide.md) for details.
 
 ## Why asyncplus() / asyncutilsx?
 
@@ -28,7 +32,7 @@ asgi_app = asyncplus(app, sio)
 # - Each handles its own concerns
 ```
 
-FastAPI’s `app.mount("/path", other_asgi)` works, but you must serve Socket.IO on a subpath and deal with that path everywhere (client, CORS, proxies). **asyncplus** gives you a **single ASGI app**: one entry point for the server (e.g. uvicorn), no mount path, same origin for API and Socket.IO. Plug and play—no middleware, no timeouts or circuit breakers added; you keep full control of the ASGI apps you pass in.
+FastAPI’s `app.mount("/path", other_asgi)` works, but you must serve Socket.IO on a subpath and deal with that path everywhere (client, CORS, proxies). **asyncplus** gives you a **single ASGI app**: one entry point for the server (e.g. uvicorn), no mount path, same origin for API and Socket.IO. Plug and play—no extra middleware added; you keep full control of the ASGI apps you pass in.
 
 ## Install
 
@@ -59,6 +63,7 @@ Or use the convenience helper: `asgi_app = create_app(app, sio)`.
 - **HTTP** (except `/socket.io/*`) → FastAPI  
 - **HTTP** `/socket.io/*` → Socket.IO (polling)  
 - **WebSocket** (path matching `socketio_path`) → Socket.IO; other WebSocket paths → FastAPI  
+- **Lifespan** → both apps (startup/shutdown events are multiplexed so each app boots and shuts down properly)
 
 Optional: `asyncplus(app, sio, socketio_path="/custom/", debug_hook=..., socketio_fallback_on_error=False, timeout=30.0)`.
 
