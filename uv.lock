@@ -691,9 +691,6 @@ wheels = [
 
 [[package]]
 name = "python-engineio"
-
-version = "4.13.2"
-
 version = "4.13.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
